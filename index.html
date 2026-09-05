@@ -321,9 +321,10 @@
   function persist(s){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }catch(e){} }
 
   // ---------- ui (ephemeral) state ----------
+  function todayIso(){ var n = new Date(); return iso(n.getFullYear(), n.getMonth(), n.getDate()); }
   var ui = {
     tab:'dash', sheetOpen:false, settingsOpen:false, adjustOpen:false,
-    amount:'', category:CATS[0], supplier:'', paymentMethod:PAYMENT_METHODS[0], comment:'',
+    amount:'', date:todayIso(), category:CATS[0], supplier:'', paymentMethod:PAYMENT_METHODS[0], comment:'',
     historyFilter:'All', freshId:null, adjustDraft:null, settingsDraft:null, syncStatus:null
   };
 
@@ -693,9 +694,13 @@
     html += '<div style="display:flex;flex-direction:column;gap:16px">';
     html += '<div class="field-label" style="margin-bottom:0">New expense</div>';
 
-    html += '<label style="display:block"><span class="field-label">Amount (\u20AC)</span>' +
+    html += '<div style="display:flex;gap:10px">' +
+      '<label style="display:block;flex:1.3"><span class="field-label">Amount (\u20AC)</span>' +
       '<input class="field-input" style="font-family:var(--display);font-size:30px;color:var(--pink);padding:10px 14px" ' +
-      'type="number" inputmode="decimal" min="0" step="0.01" value="'+escapeHtml(ui.amount)+'" data-field="amount" placeholder="0.00"></label>';
+      'type="number" inputmode="decimal" min="0" step="0.01" value="'+escapeHtml(ui.amount)+'" data-field="amount" placeholder="0.00"></label>' +
+      '<label style="display:block;flex:1"><span class="field-label">Date</span>' +
+      '<input class="field-input" style="padding:10px 12px;font-size:14px" type="date" value="'+escapeHtml(ui.date)+'" data-field="date"></label>' +
+      '</div>';
 
     if(recents.length){
       html += '<div style="display:flex;flex-direction:column;gap:8px"><span class="field-label" style="margin-bottom:0">Repeat a recent one</span>' +
@@ -859,7 +864,7 @@
 
   var ACTIONS = {
     setTab: function(v){ ui.tab = v; render(); },
-    openSheet: function(){ ui.sheetOpen = true; render(); },
+    openSheet: function(){ ui.date = todayIso(); ui.sheetOpen = true; render(); },
     closeSheet: function(){ ui.sheetOpen = false; ui.amount=''; ui.supplier=''; ui.comment=''; render(); },
     selectCategory: function(v){ ui.category = v; render(); },
     selectPayment: function(v){ ui.paymentMethod = v; render(); },
@@ -871,9 +876,8 @@
     saveExpense: function(){
       var amt = parseFloat(ui.amount || '0');
       if(!amt){ ACTIONS.closeSheet(); return; }
-      var now = new Date();
       var created = {
-        id: state.nextId++, date: iso(now.getFullYear(), now.getMonth(), now.getDate()),
+        id: state.nextId++, date: ui.date || todayIso(),
         supplier: (ui.supplier || '').trim() || ui.category, category: ui.category, amount: round2(amt),
         paymentMethod: ui.paymentMethod, comment: (ui.comment || '').trim()
       };
@@ -919,7 +923,7 @@
     var el = e.target;
     if(!el.matches('[data-field]')) return;
     var field = el.dataset.field;
-    if(ui.sheetOpen && (field==='amount' || field==='supplier' || field==='comment')){ ui[field] = el.value; return; }
+    if(ui.sheetOpen && (field==='amount' || field==='supplier' || field==='comment' || field==='date')){ ui[field] = el.value; return; }
     if(ui.settingsOpen && ui.settingsDraft && field==='syncUrl'){ ui.settingsDraft.syncUrl = el.value; return; }
     if(ui.adjustDraft){
       if(field==='monthlyIncome') ui.adjustDraft.monthlyIncome = el.value;
