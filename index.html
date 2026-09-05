@@ -237,7 +237,7 @@
     var pct = {}; CATS.forEach(function(c){ pct[c]=CATEGORY_PCT[c]; });
     return {
       settings:{dashboardLayout:'ring', pinkIntensity:'bold', syncUrl:''},
-      monthlyIncome:MONTHLY_INCOME, categoryPct:pct, expenses:[], nextId: 10000,
+      monthlyIncome:MONTHLY_INCOME, categoryPct:pct, expenses:[],
       migratedRemoveDemoData: true
     };
   }
@@ -271,6 +271,7 @@
 
   // ---------- ui (ephemeral) state ----------
   function todayIso(){ var n = new Date(); return iso(n.getFullYear(), n.getMonth(), n.getDate()); }
+  function newId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
   var ui = {
     tab:'dash', sheetOpen:false, settingsOpen:false, adjustOpen:false,
     amount:'', date:todayIso(), category:CATS[0], supplier:'', paymentMethod:PAYMENT_METHODS[0], comment:'',
@@ -516,7 +517,7 @@
   // ---------- render: history ----------
   function renderHistory(){
     var expenses = state.expenses.filter(function(e){ return ui.historyFilter==='All' || e.category===ui.historyFilter; })
-      .slice().sort(function(a,b){ return b.date<a.date?-1:(b.date>a.date?1:b.id-a.id); });
+      .slice().sort(function(a,b){ return b.date<a.date?-1:(b.date>a.date?1:0); });
     var html = '<div style="display:flex;flex-direction:column;gap:12px">';
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
     ['All'].concat(CATS).forEach(function(f){
@@ -589,7 +590,7 @@
   // ---------- render: log sheet ----------
   function renderLogSheet(){
     if(!ui.sheetOpen) return '';
-    var recents = state.expenses.slice().sort(function(a,b){ return b.id-a.id; }).slice(0,3);
+    var recents = state.expenses.slice().sort(function(a,b){ return b.date<a.date?-1:(b.date>a.date?1:0); }).slice(0,3);
     var html = '<div class="sheet-backdrop"><div class="sheet-scrim" data-action="closeSheet"></div><div class="sheet"><div class="grabber"></div>';
     html += '<div style="display:flex;flex-direction:column;gap:16px">';
     html += '<div class="field-label" style="margin-bottom:0">New expense</div>';
@@ -661,10 +662,13 @@
 
     html += '<div style="display:flex;flex-direction:column;gap:9px;padding-top:6px;border-top:1px solid var(--ink-hair)">' +
       '<div class="field-label" style="margin-top:12px">Google Sheet sync</div>' +
-      '<div style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;margin-bottom:2px">Paste the Apps Script Web App URL (ends in /exec) for the Transactions tab. Every save also posts here.</div>' +
+      '<div style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;margin-bottom:2px">Paste the Apps Script Web App URL (ends in /exec) for the Transactions tab. The app loads your transactions from this Sheet on open, and every add or delete here updates it too \u2014 your Sheet is the real copy, this phone just caches it.</div>' +
       '<input class="field-input" type="url" value="'+escapeHtml(ui.settingsDraft.syncUrl)+'" data-field="syncUrl" placeholder="https://script.google.com/macros/s/.../exec">' +
-      '<button type="button" class="btn-pill btn-save" data-action="saveSyncUrl" style="padding:12px 0;font-size:13.5px;margin-top:6px">'+icon('check',15)+'Save endpoint</button>' +
-      (state.settings.syncUrl ? '<div style="font-size:11.5px;color:var(--ink-soft)">Currently syncing to your saved endpoint.</div>' : '<div style="font-size:11.5px;color:var(--ink-soft)">Not connected yet \u2014 entries are only saved on this phone.</div>') +
+      '<div style="display:flex;gap:8px;margin-top:6px">' +
+      '<button type="button" class="btn-pill btn-save" data-action="saveSyncUrl" style="flex:1;padding:12px 0;font-size:13.5px">'+icon('check',15)+'Save endpoint</button>' +
+      (state.settings.syncUrl ? '<button type="button" class="btn-ghost" data-action="refreshFromSheet" style="padding:12px 16px;font-size:13.5px">Refresh now</button>' : '') +
+      '</div>' +
+      (state.settings.syncUrl ? '<div style="font-size:11.5px;color:var(--ink-soft)">Connected \u2014 syncing to your saved endpoint.</div>' : '<div style="font-size:11.5px;color:var(--ink-soft)">Not connected yet \u2014 entries are only saved on this phone.</div>') +
       '</div>';
 
     html += '</div></div>';
@@ -739,22 +743,109 @@
   }
 
   // ---------- Google Sheet sync ----------
-  function syncExpenseToSheet(expense){
-    var url = state.settings.syncUrl;
-    if(!url) { ui.syncStatus = 'Saved locally only \u2014 no Google Sheet endpoint set (Settings \u2192 Google Sheet sync).'; render(); scheduleClearSyncStatus(); return; }
-    ui.syncStatus = 'Saved locally \u2014 sending to Sheet\u2026'; render();
-    var payload = {
-      token: SYNC_TOKEN, date: expense.date, category: expense.category, supplier: expense.supplier,
-      amount: expense.amount, paymentMethod: expense.paymentMethod, comment: expense.comment
-    };
-    // no custom headers: a plain string body stays a "simple request" under mode:'no-cors',
-    // avoiding a CORS preflight that Apps Script's /exec endpoint won't answer.
-    fetch(url, { method:'POST', mode:'no-cors', body: JSON.stringify(payload) })
-      .then(function(){ ui.syncStatus = 'Sent to your Google Sheet.'; render(); scheduleClearSyncStatus(); })
-      .catch(function(){ ui.syncStatus = 'Saved locally \u2014 sync failed (check connection).'; render(); scheduleClearSyncStatus(); });
+  // JSONP, not fetch(): Apps Script Web Apps don't return CORS headers, so a normal
+  // cross-origin fetch() can't read the response (and mode:'no-cors' makes it unreadable
+  // on purpose). A <script src> tag isn't subject to CORS, so the Apps Script side wraps
+  // its JSON reply as `callbackName({...})` and this just executes it.
+  function jsonpRequest(params, timeoutMs){
+    return new Promise(function(resolve, reject){
+      var cbName = 'bloomCb_' + Date.now() + '_' + Math.floor(Math.random()*1e6);
+      var script = document.createElement('script');
+      var done = false;
+      var timeoutId = setTimeout(function(){ finish(function(){ reject(new Error('timeout')); }); }, timeoutMs || 12000);
+      function finish(fn){
+        if(done) return; done = true;
+        clearTimeout(timeoutId);
+        delete window[cbName];
+        if(script.parentNode) script.parentNode.removeChild(script);
+        fn();
+      }
+      window[cbName] = function(data){ finish(function(){ resolve(data); }); };
+      script.onerror = function(){ finish(function(){ reject(new Error('network error')); }); };
+      var qs = Object.keys(params).map(function(k){ return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
+      var sep = state.settings.syncUrl.indexOf('?') >= 0 ? '&' : '?';
+      script.src = state.settings.syncUrl + sep + qs + '&callback=' + cbName;
+      document.head.appendChild(script);
+    });
   }
   function scheduleClearSyncStatus(){
     setTimeout(function(){ ui.syncStatus = null; render(); }, 3500);
+  }
+  function refreshFromSheet(){
+    if(!state.settings.syncUrl) return;
+    ui.syncStatus = 'Loading from Google Sheet\u2026'; render();
+    jsonpRequest({ token: SYNC_TOKEN, action: 'list' })
+      .then(function(res){
+        if(!res || !res.ok) throw new Error((res && res.error) || 'list failed');
+        var serverItems = res.items.map(function(it){ return Object.assign({}, it, { synced: true }); });
+        var serverIds = {}; serverItems.forEach(function(it){ serverIds[it.id] = true; });
+        // anything logged on this device that never got confirmed as written (network hiccup,
+        // or predates this sync feature) survives the refresh and gets one more send attempt --
+        // otherwise "local storage is disposable" would risk losing not-yet-synced entries.
+        var pendingLocal = state.expenses.filter(function(e){ return e.synced !== true && !serverIds[e.id]; });
+        state.expenses = serverItems.concat(pendingLocal);
+        persist(state);
+        ui.syncStatus = null; render();
+        pendingLocal.forEach(function(e){ trySyncCreate(e); });
+      })
+      .catch(function(){
+        ui.syncStatus = 'Could not reach your Google Sheet \u2014 showing the last saved copy on this device.';
+        render(); scheduleClearSyncStatus();
+      });
+  }
+  function trySyncCreate(expense){
+    jsonpRequest({
+      token: SYNC_TOKEN, action: 'create', id: expense.id, date: expense.date, category: expense.category,
+      supplier: expense.supplier, amount: expense.amount, paymentMethod: expense.paymentMethod, comment: expense.comment
+    }).then(function(res){
+      if(res && res.ok){
+        var e = state.expenses.filter(function(x){ return x.id===expense.id; })[0];
+        if(e){ e.synced = true; persist(state); }
+      }
+    }).catch(function(){ /* stays unsynced locally; retried on next load */ });
+  }
+  function syncCreateExpense(expense){
+    if(!state.settings.syncUrl){
+      ui.syncStatus = 'Saved locally only \u2014 no Google Sheet endpoint set (Settings \u2192 Google Sheet sync).';
+      render(); scheduleClearSyncStatus(); return;
+    }
+    ui.syncStatus = 'Saving to Google Sheet\u2026'; render();
+    jsonpRequest({
+      token: SYNC_TOKEN, action: 'create', id: expense.id, date: expense.date, category: expense.category,
+      supplier: expense.supplier, amount: expense.amount, paymentMethod: expense.paymentMethod, comment: expense.comment
+    }).then(function(res){
+      if(res && res.ok){
+        expense.synced = true; persist(state);
+        ui.syncStatus = 'Saved to your Google Sheet.';
+      } else {
+        ui.syncStatus = 'Saved locally \u2014 the Sheet rejected it (' + ((res && res.error) || 'unknown error') + ').';
+      }
+      render(); scheduleClearSyncStatus();
+    }).catch(function(){
+      ui.syncStatus = 'Saved locally \u2014 could not reach the Sheet (will retry next time you open the app).';
+      render(); scheduleClearSyncStatus();
+    });
+  }
+  function syncDeleteExpense(expense){
+    if(!state.settings.syncUrl || expense.synced !== true) return;
+    jsonpRequest({ token: SYNC_TOKEN, action: 'delete', id: expense.id })
+      .then(function(res){
+        if(!res || !res.ok){
+          ui.syncStatus = 'Removed locally \u2014 could not remove it from the Sheet (' + ((res && res.error) || 'not found') + ').';
+          render(); scheduleClearSyncStatus();
+        }
+      })
+      .catch(function(){
+        ui.syncStatus = 'Removed locally \u2014 could not reach the Sheet to remove it there too.';
+        render(); scheduleClearSyncStatus();
+      });
+  }
+  function commitSyncUrl(){
+    var next = (ui.settingsDraft.syncUrl || '').trim();
+    if(next === state.settings.syncUrl) return;
+    state.settings.syncUrl = next;
+    persist(state);
+    refreshFromSheet();
   }
 
   var ACTIONS = {
@@ -772,36 +863,39 @@
       var amt = parseFloat(ui.amount || '0');
       if(!amt){ ACTIONS.closeSheet(); return; }
       var created = {
-        id: state.nextId++, date: ui.date || todayIso(),
+        id: newId(), date: ui.date || todayIso(),
         supplier: (ui.supplier || '').trim() || ui.category, category: ui.category, amount: round2(amt),
-        paymentMethod: ui.paymentMethod, comment: (ui.comment || '').trim()
+        paymentMethod: ui.paymentMethod, comment: (ui.comment || '').trim(), synced: false
       };
       state.expenses.push(created);
       persist(state);
       ui.sheetOpen = false; ui.amount = ''; ui.supplier = ''; ui.comment = ''; ui.tab = 'dash'; ui.freshId = created.id;
       render();
       setTimeout(function(){ ui.freshId = null; render(); }, 1200);
-      syncExpenseToSheet(created);
+      syncCreateExpense(created);
     },
     openSettings: function(){ ui.settingsDraft = { syncUrl: state.settings.syncUrl || '' }; ui.settingsOpen = true; render(); },
     closeSettings: function(){ ui.settingsOpen = false; render(); },
     setSetting: function(v){
       var parts = v.split(':'); state.settings[parts[0]] = parts[1]; persist(state); render();
     },
-    saveSyncUrl: function(){
-      state.settings.syncUrl = (ui.settingsDraft.syncUrl || '').trim();
-      persist(state); render();
-    },
+    saveSyncUrl: function(){ commitSyncUrl(); },
+    refreshFromSheet: function(){ refreshFromSheet(); },
     setFilter: function(v){ ui.historyFilter = v; render(); },
     deleteExpense: function(v){
       var e = state.expenses.filter(function(x){ return String(x.id)===String(v); })[0];
       if(!e) return;
       var label = (e.supplier||e.category) + ' \u2014 ' + fmt(e.amount) + ' (' + e.date + ')';
-      var ok = confirm('Delete "' + label + '"?\n\nThis only removes it from this app. It will NOT be removed from your Google Sheet \u2014 delete that row there yourself if needed.');
+      var willAlsoRemoveFromSheet = !!state.settings.syncUrl && e.synced === true;
+      var msg = 'Delete "' + label + '"?\n\n' + (willAlsoRemoveFromSheet
+        ? 'This also removes it from your Google Sheet.'
+        : 'This only removes it from this app (it was never confirmed in your Google Sheet).');
+      var ok = confirm(msg);
       if(!ok) return;
       state.expenses = state.expenses.filter(function(x){ return String(x.id)!==String(v); });
       persist(state);
       render();
+      syncDeleteExpense(e);
     },
     openAdjust: function(){
       ui.adjustDraft = { monthlyIncome: state.monthlyIncome, categoryPct: Object.assign({}, state.categoryPct) };
@@ -842,14 +936,14 @@
   document.addEventListener('blur', function(e){
     var el = e.target;
     if(el.matches && el.matches('[data-field="syncUrl"]') && ui.settingsDraft){
-      state.settings.syncUrl = (ui.settingsDraft.syncUrl || '').trim();
-      persist(state);
+      commitSyncUrl();
     }
   }, true);
 
   // ---------- boot ----------
   state = loadState();
   render();
+  refreshFromSheet();
 })();
 </script>
 </body>
