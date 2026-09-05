@@ -98,12 +98,14 @@
   .filter-chip{border:1px solid var(--ink-hair);cursor:pointer;padding:7px 14px;border-radius:999px;font-size:12.5px;font-weight:600;background:transparent;color:var(--ink)}
   .filter-chip.active{background:var(--pink);color:var(--cream);border-color:var(--pink)}
 
-  .txn-row, .holding-row{border-radius:24px;padding:14px 16px;display:flex;align-items:center;gap:13px;background:var(--surface)}
+  .txn-row{border-radius:24px;padding:14px 16px;display:flex;align-items:center;gap:13px;background:var(--surface)}
   .icon-badge{width:36px;height:36px;flex:none;border-radius:50%;display:flex;align-items:center;justify-content:center}
   .icon-badge svg{width:17px;height:17px;color:var(--ink)}
   .txn-name{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .txn-sub{font-size:11.5px;color:var(--ink-soft);margin-top:1px}
   .txn-amt{font-family:var(--display);font-size:16px;flex:none;font-variant-numeric:tabular-nums}
+  .delete-btn{flex:none;border:none;background:transparent;cursor:pointer;padding:6px;margin:-6px -8px -6px 0;color:var(--ink-faint);display:flex;align-items:center;justify-content:center;border-radius:8px}
+  .delete-btn:hover{color:var(--danger);background:rgba(154,52,84,.08)}
   .date-label{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-faint);padding:8px 2px 0;font-weight:600}
   @keyframes popIn{0%{transform:scale(.92);opacity:0}60%{transform:scale(1.03)}100%{transform:scale(1);opacity:1}}
   .fresh{animation:popIn .4s cubic-bezier(.22,1,.36,1); background:var(--pink-100) !important}
@@ -210,14 +212,6 @@
   var MONTH_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   var DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-  var HOLDINGS = [
-    {badge:'VW', name:'FTSE All-World ETF', sub:'Accumulating', value:7420.60, dayChangePct:0.42, tint:'#ccdbb2'},
-    {badge:'IW', name:'Core MSCI World', sub:'Accumulating', value:2180.00, dayChangePct:0.31, tint:'#f0fae1'},
-    {badge:'BT', name:'Bitcoin', sub:'Spot', value:1540.90, dayChangePct:-1.20, tint:'#ffdfe6'},
-    {badge:'SA', name:'Savings account', sub:'2.1% AER', value:1198.68, dayChangePct:0.01, tint:'#fff1f4'}
-  ];
-  var PORTFOLIO_HISTORY = [10909.91, 11285.63, 11649.05, 11959.52, 12180.75, 12261.02, 12340.18];
-
   // ---------- helpers ----------
   function pad2(n){ return String(n).length<2 ? '0'+n : ''+n; }
   function iso(y,m,d){ return y+'-'+pad2(m+1)+'-'+pad2(d); }
@@ -235,84 +229,39 @@
     if(diff===1) return 'Yesterday';
     return DAY_NAMES[d.getDay()] + ' \u00B7 ' + d.getDate() + ' ' + MONTH_ABBR_CAP[d.getMonth()];
   }
-  function mulberry32(seed){
-    return function(){ seed|=0; seed=(seed+0x6D2B79F5)|0; var t=Math.imul(seed^(seed>>>15),1|seed);
-      t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; };
-  }
 
   // ---------- state ----------
   var state = null;
-
-  function seedExpenses(){
-    var rand = mulberry32(20260831);
-    var pick = function(arr){ return arr[Math.floor(rand()*arr.length)]; };
-    var between = function(lo,hi){ return lo + rand()*(hi-lo); };
-    var SUPPLIERS = {
-      'Saving':['Transfer to savings'], 'Rent & Utilities':['Landlord','Enel Energia','Acea'],
-      'Other fixed expenses':['Insurance','Phone plan'],
-      'Emergency':['Car repair','Dentist'],
-      'Travel':['Trenitalia','Ryanair','Bike rental'],
-      'Food':['Esselunga','Carrefour','Local market'],
-      'Clothes':['Zara','Decathlon'],
-      'Fun budget':['Cinema','Concert tickets'],
-      'Family':['Gift for Bro','Gift for Sis'],
-      'Life essentials':['Pharmacy','Toiletries'],
-      'Eating out':['Trattoria Bella','Kaffee Kollektiv','Ramen House']
-    };
-    var AMOUNT_RANGES = {
-      'Saving':[810,810], 'Rent & Utilities':[750,900], 'Other fixed expenses':[15,35],
-      'Emergency':[20,150], 'Travel':[15,90], 'Food':[15,60], 'Clothes':[20,90],
-      'Fun budget':[10,45], 'Family':[15,60], 'Life essentials':[8,30], 'Eating out':[10,40]
-    };
-    var COUNTS = {
-      'Saving':[1,1], 'Rent & Utilities':[1,2], 'Other fixed expenses':[1,2], 'Emergency':[0,1],
-      'Travel':[0,3], 'Food':[6,10], 'Clothes':[0,2], 'Fun budget':[1,3], 'Family':[0,2],
-      'Life essentials':[2,4], 'Eating out':[3,6]
-    };
-    var now = new Date(); var rows = []; var id = 1;
-    for(var monthsAgo=5; monthsAgo>=0; monthsAgo--){
-      var ref = new Date(now.getFullYear(), now.getMonth()-monthsAgo, 1);
-      var year = ref.getFullYear(), monthIndex = ref.getMonth();
-      var isCurrent = monthsAgo===0;
-      var fullMonthDays = daysInMonth(year, monthIndex);
-      var elapsedDays = isCurrent ? now.getDate() : fullMonthDays;
-      for(var ci=0; ci<CATS.length; ci++){
-        var cat = CATS[ci]; var range = COUNTS[cat];
-        var baseCount = Math.round(between(range[0], range[1]));
-        // scale this month's transaction count down to how much of the month has actually elapsed,
-        // so day 1 of a fresh month doesn't get a full month's worth of spending crammed into it
-        var count = isCurrent ? Math.round(baseCount * (elapsedDays/fullMonthDays)) : baseCount;
-        var fixedDay = (cat==='Saving' || cat==='Rent & Utilities') ? Math.min(4,elapsedDays) : 0;
-        if(fixedDay===0 && isCurrent && elapsedDays<4 && (cat==='Saving' || cat==='Rent & Utilities')) count = 0;
-        for(var i=0;i<count;i++){
-          var day = fixedDay || Math.max(1, Math.round(between(1,elapsedDays)));
-          var ar = AMOUNT_RANGES[cat];
-          var amount = round2(between(ar[0], ar[1]));
-          var sortKey = new Date(year, monthIndex, day).getTime() + rand();
-          rows.push({
-            id:id++, date:iso(year,monthIndex,day), supplier:pick(SUPPLIERS[cat]), category:cat, amount:amount,
-            paymentMethod: pick(PAYMENT_METHODS), comment:'', sortKey:sortKey
-          });
-        }
-      }
-    }
-    rows.sort(function(a,b){ return a.sortKey - b.sortKey; });
-    rows.forEach(function(r){ delete r.sortKey; });
-    return rows;
-  }
 
   function defaultState(){
     var pct = {}; CATS.forEach(function(c){ pct[c]=CATEGORY_PCT[c]; });
     return {
       settings:{dashboardLayout:'ring', pinkIntensity:'bold', syncUrl:''},
-      monthlyIncome:MONTHLY_INCOME, categoryPct:pct, expenses:seedExpenses(), nextId: 10000
+      monthlyIncome:MONTHLY_INCOME, categoryPct:pct, expenses:[], nextId: 10000,
+      migratedRemoveDemoData: true
     };
   }
 
+  // One-time cleanup: earlier versions of this app seeded ~6 months of example transactions
+  // so the app didn't look empty on first use. Anyone whose local data still has that seed
+  // data mixed in gets it stripped once, on the first load after this change -- anything
+  // genuinely dated before Sep 2026 that a user logs later (e.g. via the date field) is safe,
+  // since this only ever runs once per device.
+  var DEMO_DATA_CUTOFF = '2026-09-01';
   function loadState(){
     try{
       var raw = localStorage.getItem(STORAGE_KEY);
-      if(raw){ var parsed = JSON.parse(raw); if(parsed && parsed.expenses) return parsed; }
+      if(raw){
+        var parsed = JSON.parse(raw);
+        if(parsed && parsed.expenses){
+          if(!parsed.migratedRemoveDemoData){
+            parsed.expenses = parsed.expenses.filter(function(e){ return e.date >= DEMO_DATA_CUTOFF; });
+            parsed.migratedRemoveDemoData = true;
+            persist(parsed);
+          }
+          return parsed;
+        }
+      }
     }catch(e){}
     var fresh = defaultState();
     persist(fresh);
@@ -403,18 +352,6 @@
     return { monthlyIncome: state.monthlyIncome, categories: categories };
   }
 
-  function computeHoldings(){
-    var portfolioValue = round2(HOLDINGS.reduce(function(a,h){ return a+h.value; },0));
-    var dayChangeAbs = round2(HOLDINGS.reduce(function(a,h){ return a + h.value*(h.dayChangePct/100); },0));
-    var prevValue = portfolioValue - dayChangeAbs;
-    var dayChangePct = prevValue>0 ? round2((dayChangeAbs/prevValue)*100) : 0;
-    var holdings = HOLDINGS.map(function(h){
-      return { badge:h.badge, name:h.name, sub:h.sub, value: round2(h.value), dayChangePct:h.dayChangePct,
-        up: h.dayChangePct>=0, tint:h.tint, weightPct: round2((h.value/portfolioValue)*100) };
-    });
-    return { portfolioValue:portfolioValue, dayChangeAbs:dayChangeAbs, dayChangePct:dayChangePct, holdings:holdings, history: PORTFOLIO_HISTORY };
-  }
-
   function computeInsights(dash){
     var now = new Date(), year = now.getFullYear(), monthIndex = now.getMonth(), today = now.getDate();
     var thisMonth = monthTotalsByCategory(state.expenses, year, monthIndex, today);
@@ -440,12 +377,6 @@
         head: m.cat + ' is ' + (down?'down':'up') + ' ' + fmt0(Math.abs(m.delta)),
         body: fmt0(Math.abs(m.delta)) + (down?' less':' more') + ' than this time last month, at the same point in the cycle.' });
     });
-
-    var hist = PORTFOLIO_HISTORY, first = hist[0], last = hist[hist.length-1];
-    var growthPct = first>0 ? round2(((last-first)/first)*100) : 0;
-    insights.push({ kicker:'Investing', icon:'sprout', tone:'sage',
-      head: 'Portfolio ' + (growthPct>=0?'up':'down') + ' ' + Math.abs(growthPct) + '% over ' + (hist.length-1) + ' months',
-      body: 'From ' + fmt0(first) + ' to ' + fmt0(last) + '. Steady contributions are doing more work than any single pick.' });
 
     return insights;
   }
@@ -494,7 +425,8 @@
     target: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>',
     sparkles: '<path d="M11 2.5 L12.6 8.4 L18.5 10 L12.6 11.6 L11 17.5 L9.4 11.6 L3.5 10 L9.4 8.4 Z" fill="currentColor" stroke="none"/><path d="M18.5 15 L19.3 17.7 L22 18.5 L19.3 19.3 L18.5 22 L17.7 19.3 L15 18.5 L17.7 17.7 Z" fill="currentColor" stroke="none"/>',
     family: '<circle cx="8" cy="7" r="2.3"/><path d="M4 20 C4 15.5 6 13 8 13 C10 13 12 15.5 12 20"/><circle cx="16.5" cy="8" r="2"/><path d="M13 20 C13 16 14.5 14 16.5 14 C18.5 14 20 16 20 20"/>',
-    heart: '<path d="M12 20 C12 20 4 14 4 8.5 C4 5.5 6.5 4 9 4 C10.5 4 11.5 5 12 6 C12.5 5 13.5 4 15 4 C17.5 4 20 5.5 20 8.5 C20 14 12 20 12 20 Z"/>'
+    heart: '<path d="M12 20 C12 20 4 14 4 8.5 C4 5.5 6.5 4 9 4 C10.5 4 11.5 5 12 6 C12.5 5 13.5 4 15 4 C17.5 4 20 5.5 20 8.5 C20 14 12 20 12 20 Z"/>',
+    trash: '<path d="M4 7 H20"/><path d="M9 7 V4 H15 V7"/><path d="M6 7 L7 21 H17 L18 7"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>'
   };
   function icon(name, size, extra){
     var body = ICON_DEFS[name] || '';
@@ -581,40 +513,6 @@
     return { html: '<div style="display:flex;flex-direction:column;gap:16px">'+html+'</div>', dash: dash };
   }
 
-  // ---------- render: investments ----------
-  function renderInvestments(investingInsight){
-    var data = computeHoldings();
-    var up = data.dayChangeAbs>=0;
-    var poly = buildPolyline(data.history, {height:60, padTop:6, padBottom:6});
-    var html = '<div style="display:flex;flex-direction:column;gap:16px">';
-    html += '<div class="hero" style="background:#3d472b;color:#f0fae1;display:flex;flex-direction:column;gap:12px">' +
-      '<div class="eyebrow-lg">Portfolio value</div><div style="font-family:var(--display);font-size:38px;line-height:1;letter-spacing:-.02em">'+fmt(data.portfolioValue)+'</div>' +
-      '<div style="display:flex;align-items:center;gap:8px">' +
-      '<span style="display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:999px;background:rgba(240,250,225,.16);font-size:12.5px;font-weight:600">' +
-      icon(up?'arrow-up-right':'arrow-down-right',14) + fmt(Math.abs(data.dayChangeAbs)) + '</span>' +
-      '<span style="font-size:12.5px;opacity:.9">'+(up?'+':'-')+Math.abs(data.dayChangePct)+'% today</span></div>' +
-      '<svg viewBox="0 0 300 60" style="width:100%;height:56px;display:block;margin-top:2px">' +
-      '<polyline points="'+poly.points+'" fill="none" stroke="#aebf92" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></polyline></svg></div>';
-
-    html += '<div style="display:flex;flex-direction:column;gap:10px">' +
-      '<div class="row-between" style="padding:0 2px"><div class="h3">Holdings</div><div style="font-size:11px;color:var(--ink-faint)">'+data.holdings.length+' positions</div></div>';
-    data.holdings.forEach(function(h){
-      html += '<div class="holding-row"><div class="icon-badge" style="background:'+h.tint+';font-family:var(--display);font-size:13px">'+h.badge+'</div>' +
-        '<div style="flex:1;min-width:0"><div class="txn-name">'+h.name+'</div><div class="txn-sub">'+h.sub+' \u00B7 '+h.weightPct+'%</div></div>' +
-        '<div style="text-align:right;flex:none"><div style="font-size:14px;font-weight:600">'+fmt(h.value)+'</div>' +
-        '<div style="font-size:11.5px;font-weight:600;margin-top:1px;color:'+(h.up?'#728157':'#9a3454')+'">'+(h.up?'+':'')+h.dayChangePct+'%</div></div></div>';
-    });
-    html += '</div>';
-
-    if(investingInsight){
-      html += '<div style="border-radius:24px;padding:16px 18px;background:#f0fae1;display:flex;gap:12px;align-items:flex-start">' +
-        icon('sprout',18,'flex:none;color:#56633f;margin-top:2px') +
-        '<div style="font-size:13px;line-height:1.45;color:#3d472b">'+investingInsight.head+'. '+investingInsight.body+'</div></div>';
-    }
-    html += '</div>';
-    return html;
-  }
-
   // ---------- render: history ----------
   function renderHistory(){
     var expenses = state.expenses.filter(function(e){ return ui.historyFilter==='All' || e.category===ui.historyFilter; })
@@ -639,7 +537,9 @@
       html += '<div class="txn-row'+(isFresh?' fresh':'')+'"><div class="icon-badge" style="background:'+meta.tint+'">'+icon(meta.icon,17)+'</div>' +
         '<div style="flex:1;min-width:0"><div class="txn-name">'+escapeHtml(t.supplier||'Untitled')+'</div><div class="txn-sub">'+sub+'</div>'+
         (t.comment ? '<div class="txn-sub" style="font-style:italic;margin-top:2px">'+escapeHtml(t.comment)+'</div>' : '')+'</div>' +
-        '<div class="txn-amt">-'+fmt(t.amount)+'</div></div></div>';
+        '<div class="txn-amt">-'+fmt(t.amount)+'</div>' +
+        '<button type="button" class="delete-btn" data-action="deleteExpense" data-value="'+t.id+'" aria-label="Delete">'+icon('trash',15)+'</button>' +
+        '</div></div>';
     });
     html += '</div>';
     return html;
@@ -798,14 +698,12 @@
   // ---------- top-level render ----------
   var TITLES = {
     dash: function(dash){ return { kicker: greeting(), title: dash.monthLabel + ' so far' }; },
-    invest: function(){ return { kicker:'Long game', title:'Your investments' }; },
     history: function(){ return { kicker:'Every euro', title:'Transactions' }; },
     budgets: function(){ return { kicker:'The plan', title:'Budgets' }; },
     insights: function(){ return { kicker:'Patterns', title:'Worth knowing' }; }
   };
   var TABS = [
     {id:'dash', label:'Home', icon:'layout-dashboard'},
-    {id:'invest', label:'Invest', icon:'trending-up'},
     {id:'history', label:'History', icon:'receipt-text'},
     {id:'budgets', label:'Budgets', icon:'target'},
     {id:'insights', label:'Insights', icon:'sparkles'}
@@ -814,13 +712,10 @@
   function render(){
     var dashResult = renderDashboard();
     var insights = computeInsights(dashResult.dash);
-    var investingInsight = null;
-    for(var i=0;i<insights.length;i++){ if(insights[i].kicker==='Investing'){ investingInsight = insights[i]; break; } }
 
     var head = TITLES[ui.tab](dashResult.dash);
     var body;
     if(ui.tab==='dash') body = dashResult.html;
-    else if(ui.tab==='invest') body = renderInvestments(investingInsight);
     else if(ui.tab==='history') body = renderHistory();
     else if(ui.tab==='budgets') body = renderBudgets();
     else body = renderInsights(insights);
@@ -898,6 +793,16 @@
       persist(state); render();
     },
     setFilter: function(v){ ui.historyFilter = v; render(); },
+    deleteExpense: function(v){
+      var e = state.expenses.filter(function(x){ return String(x.id)===String(v); })[0];
+      if(!e) return;
+      var label = (e.supplier||e.category) + ' \u2014 ' + fmt(e.amount) + ' (' + e.date + ')';
+      var ok = confirm('Delete "' + label + '"?\n\nThis only removes it from this app. It will NOT be removed from your Google Sheet \u2014 delete that row there yourself if needed.');
+      if(!ok) return;
+      state.expenses = state.expenses.filter(function(x){ return String(x.id)!==String(v); });
+      persist(state);
+      render();
+    },
     openAdjust: function(){
       ui.adjustDraft = { monthlyIncome: state.monthlyIncome, categoryPct: Object.assign({}, state.categoryPct) };
       ui.adjustOpen = true; render();
