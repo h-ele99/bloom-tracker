@@ -164,6 +164,12 @@
   .pill-option.active{background:var(--pink);color:var(--cream);border-color:var(--pink)}
 
   .empty-state{padding:32px 4px;text-align:center;font-size:13px;color:var(--ink-soft)}
+  .pies-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .pie-card{background:var(--surface);border-radius:22px;padding:14px 8px 12px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center}
+  .pie-card svg path{transition:opacity .15s ease}
+  .pie-card svg path:active{opacity:.75}
+  .pie-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .pie-info{font-size:11px;color:var(--ink-faint);min-height:15px}
   .loading{flex:1;display:flex;align-items:center;justify-content:center;font-family:var(--display);font-size:22px;color:var(--pink)}
   @media (prefers-reduced-motion:reduce){ *{animation-duration:.001ms !important} }
 </style>
@@ -275,7 +281,7 @@
   var ui = {
     tab:'dash', sheetOpen:false, settingsOpen:false, adjustOpen:false,
     amount:'', date:todayIso(), category:CATS[0], supplier:'', paymentMethod:PAYMENT_METHODS[0], comment:'',
-    historyFilter:'All', freshId:null, adjustDraft:null, settingsDraft:null, syncStatus:null
+    historyFilter:'All', freshId:null, adjustDraft:null, settingsDraft:null, syncStatus:null, pieSelection:{}
   };
 
   // ---------- computations ----------
@@ -286,11 +292,6 @@
     expenses.forEach(function(e){ if(e.date>=start && e.date<=end) map[e.category] = (map[e.category]||0) + e.amount; });
     return map;
   }
-  function monthTotal(expenses, year, monthIndex, throughDay){
-    var map = monthTotalsByCategory(expenses, year, monthIndex, throughDay);
-    var total = 0; CATS.forEach(function(c){ total += map[c]; }); return total;
-  }
-
   function computeDashboard(){
     var now = new Date(), year = now.getFullYear(), monthIndex = now.getMonth(), today = now.getDate();
     var lastDay = daysInMonth(year, monthIndex);
@@ -326,15 +327,8 @@
       return { name:name, amount: catMap[name]||0, pct: spent>0 ? Math.round(((catMap[name]||0)/spent)*100) : 0, color: CAT_META[name].color };
     }).filter(function(c){ return c.amount>0; }).sort(function(a,b){ return b.amount-a.amount; });
 
-    var trend = [];
-    for(var m=5; m>=0; m--){
-      var ref = new Date(year, monthIndex-m, 1);
-      var total2 = m===0 ? spent : monthTotal(state.expenses, ref.getFullYear(), ref.getMonth());
-      trend.push({ monthIndex: ref.getMonth(), total: round2(total2) });
-    }
-
     return { spent:spent, budget:budget, pct:round2(pct), daysLeft: lastDay-today,
-      avgPerDay: today>0 ? round2(spent/today) : 0, days:days, categories:cats, trend:trend,
+      avgPerDay: today>0 ? round2(spent/today) : 0, days:days, categories:cats,
       monthLabel: MONTH_FULL[monthIndex], monthAbbr: MONTH_ABBR[monthIndex], lastDay: lastDay };
   }
 
@@ -383,15 +377,20 @@
   }
 
   // ---------- svg chart helpers ----------
-  function buildPolyline(values, opts){
-    opts = opts || {}; var width=opts.width||300, height=opts.height||96, padTop=opts.padTop===undefined?10:opts.padTop, padBottom=opts.padBottom===undefined?6:opts.padBottom;
-    var n = values.length; if(n===0) return {points:'', fillPoints:'', last:{x:0,y:height}};
-    var min = Math.min.apply(null, values), max = Math.max.apply(null, values); var span = (max-min)||1;
-    var usable = height-padTop-padBottom; var step = n>1 ? width/(n-1) : 0;
-    var coords = values.map(function(v,i){ var x=Math.round(i*step); var y=Math.round(padTop + (1-(v-min)/span)*usable); return [x,y]; });
-    var points = coords.map(function(c){ return c[0]+','+c[1]; }).join(' ');
-    var fillPoints = points + ' ' + coords[n-1][0] + ',' + height + ' ' + coords[0][0] + ',' + height;
-    return { points:points, fillPoints:fillPoints, last:{x:coords[n-1][0], y:coords[n-1][1]} };
+  function polarPoint_(cx, cy, r, angleDeg){
+    var rad = (angleDeg - 90) * Math.PI / 180; // 0deg = 12 o'clock, clockwise
+    return [cx + r*Math.cos(rad), cy + r*Math.sin(rad)];
+  }
+  // SVG path for one pie wedge from startDeg to endDeg (a full 0-360 sweep needs two arcs,
+  // since a single <path> arc command can't describe a complete circle).
+  function pieSlicePath(cx, cy, r, startDeg, endDeg){
+    if(endDeg - startDeg >= 359.99){
+      var p1 = polarPoint_(cx, cy, r, startDeg), pMid = polarPoint_(cx, cy, r, startDeg+180);
+      return 'M'+p1[0]+','+p1[1]+' A'+r+','+r+' 0 1,1 '+pMid[0]+','+pMid[1]+' A'+r+','+r+' 0 1,1 '+p1[0]+','+p1[1]+' Z';
+    }
+    var start = polarPoint_(cx, cy, r, startDeg), end = polarPoint_(cx, cy, r, endDeg);
+    var largeArc = (endDeg - startDeg) > 180 ? 1 : 0;
+    return 'M'+cx+','+cy+' L'+start[0]+','+start[1]+' A'+r+','+r+' 0 '+largeArc+',1 '+end[0]+','+end[1]+' Z';
   }
   function buildDonutGradient(categories){
     var acc=0; var stops = categories.map(function(c){ var seg=c.color+' '+acc+'% '+(acc+c.pct)+'%'; acc+=c.pct; return seg; });
@@ -500,16 +499,7 @@
           '<div class="track"><div style="width:'+c.pct+'%;background:'+c.color+'"></div></div></div>'; }).join('') + '</div>';
     }
 
-    var trendVals = dash.trend.map(function(t){ return t.total; });
-    var poly = buildPolyline(trendVals);
-    var dir = trendVals[trendVals.length-1]===trendVals[0] ? 'steady' : (trendVals[trendVals.length-1] < trendVals[0] ? 'trending down' : 'trending up');
-    html += '<div class="card-block"><div class="row-between"><div class="h3">Six months</div><div style="font-size:11px;color:var(--ink-soft)">'+dir+'</div></div>' +
-      '<svg viewBox="0 0 300 96" style="width:100%;height:96px;display:block;overflow:visible">' +
-      '<polyline points="'+poly.fillPoints+'" fill="rgba(226,103,140,.16)" stroke="none"></polyline>' +
-      '<polyline points="'+poly.points+'" fill="none" stroke="#c14a6f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>' +
-      '<circle cx="'+poly.last.x+'" cy="'+poly.last.y+'" r="6" fill="#c14a6f"></circle>' +
-      '<circle cx="'+poly.last.x+'" cy="'+poly.last.y+'" r="11" fill="rgba(193,74,111,.18)"></circle></svg>' +
-      '<div class="axis-row">' + dash.trend.map(function(t){ return '<span>'+MONTH_ABBR[t.monthIndex]+'</span>'; }).join('') + '</div></div>';
+    html += renderCategoryPies();
 
     return { html: '<div style="display:flex;flex-direction:column;gap:16px">'+html+'</div>', dash: dash };
   }
@@ -543,6 +533,45 @@
         '</div></div>';
     });
     html += '</div>';
+    return html;
+  }
+
+  // ---------- render: category pies (dashboard) ----------
+  function renderCategoryPies(){
+    var data = computeBudgets();
+    var R = 34, CX = 40, CY = 40;
+    var html = '<div><div class="h3" style="margin-bottom:2px">Budget by category</div>' +
+      '<div style="font-size:11px;color:var(--ink-soft);margin-bottom:12px">Tap a slice for the amount</div>' +
+      '<div class="pies-grid">';
+    data.categories.forEach(function(c){
+      var meta = CAT_META[c.name] || CAT_META[CATS[0]];
+      var over = c.spent > c.cap;
+      var spentShare = c.cap > 0 ? Math.min(1, c.spent / c.cap) : (c.spent > 0 ? 1 : 0);
+      var spentDeg = spentShare * 360;
+      var spentColor = over ? '#9a3454' : meta.color;
+      var key = escapeHtml(c.name);
+      var svg = '<svg viewBox="0 0 80 80" style="width:76px;height:76px" aria-hidden="true">';
+      if(over || spentDeg >= 359.99){
+        svg += '<path d="'+pieSlicePath(CX,CY,R,0,360)+'" fill="'+spentColor+'" data-action="selectPieSlice" data-value="'+key+'|spent" style="cursor:pointer"></path>';
+      } else {
+        svg += '<path d="'+pieSlicePath(CX,CY,R,0,spentDeg)+'" fill="'+spentColor+'" data-action="selectPieSlice" data-value="'+key+'|spent" style="cursor:pointer"></path>';
+        svg += '<path d="'+pieSlicePath(CX,CY,R,spentDeg,360)+'" fill="var(--track)" data-action="selectPieSlice" data-value="'+key+'|remaining" style="cursor:pointer"></path>';
+      }
+      svg += '</svg>';
+
+      var sel = ui.pieSelection[c.name];
+      var info;
+      if(sel==='spent') info = '<span style="color:'+spentColor+';font-weight:600">'+fmt(c.spent)+' spent</span>';
+      else if(sel==='remaining') info = over
+        ? '<span style="color:#9a3454;font-weight:600">'+fmt(c.spent-c.cap)+' over</span>'
+        : '<span style="font-weight:600">'+fmt(c.cap-c.spent)+' left</span>';
+      else info = '<span>'+fmt0(c.cap)+' budget</span>';
+
+      html += '<div class="pie-card">' + svg +
+        '<div class="pie-name">'+icon(meta.icon,13,'vertical-align:-2px;margin-right:4px;color:'+meta.color)+c.name+'</div>' +
+        '<div class="pie-info">'+info+'</div></div>';
+    });
+    html += '</div></div>';
     return html;
   }
 
@@ -882,6 +911,12 @@
     saveSyncUrl: function(){ commitSyncUrl(); },
     refreshFromSheet: function(){ refreshFromSheet(); },
     setFilter: function(v){ ui.historyFilter = v; render(); },
+    selectPieSlice: function(v){
+      var idx = v.lastIndexOf('|');
+      var cat = v.slice(0, idx), kind = v.slice(idx+1);
+      ui.pieSelection[cat] = ui.pieSelection[cat]===kind ? null : kind;
+      render();
+    },
     deleteExpense: function(v){
       var e = state.expenses.filter(function(x){ return String(x.id)===String(v); })[0];
       if(!e) return;
