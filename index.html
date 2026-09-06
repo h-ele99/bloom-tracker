@@ -269,11 +269,20 @@
       if(raw){
         var parsed = JSON.parse(raw);
         if(parsed && parsed.expenses){
+          var changed = false;
           if(!parsed.migratedRemoveDemoData){
             parsed.expenses = parsed.expenses.filter(function(e){ return e.date >= DEMO_DATA_CUTOFF; });
             parsed.migratedRemoveDemoData = true;
-            persist(parsed);
+            changed = true;
           }
+          // Backfill a blank/missing sync URL saved on this device before the baked-in
+          // default existed -- otherwise it stays empty forever since this only ever
+          // seeds it once, for storage that was never touched.
+          if(parsed.settings && !parsed.settings.syncUrl){
+            parsed.settings.syncUrl = DEFAULT_SYNC_URL;
+            changed = true;
+          }
+          if(changed) persist(parsed);
           return parsed;
         }
       }
