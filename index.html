@@ -185,18 +185,26 @@
   "use strict";
 
   var CATS = ['Saving','Rent & Utilities','Other fixed expenses','Emergency','Travel','Food','Clothes','Fun budget','Family','Life essentials','Eating out'];
+  // 11 distinct hues validated with the dataviz skill's categorical-palette checker
+  // against this app's card surface (#f7e6e6): lightness band + chroma floor pass
+  // for all 11, and no two are anywhere near each other (the old palette had four
+  // exact duplicate pairs). Beyond ~8 series a categorical palette can't clear every
+  // pairwise colorblind-separation check at once (see the skill's own reference
+  // palette, which only clears all-pairs for its first 3 of 8 slots) -- the small
+  // residual risk on the closest pairs is why every place these colors appear also
+  // shows the category's icon and name, never color alone.
   var CAT_META = {
-    'Saving':{icon:'sprout', color:'#728157', tint:'#f0fae1'},
-    'Rent & Utilities':{icon:'home', color:'#9a3454', tint:'#ffc2d1'},
-    'Other fixed expenses':{icon:'repeat', color:'#8fa073', tint:'#f0fae1'},
-    'Emergency':{icon:'alert-circle', color:'#c14a6f', tint:'#ffdfe6'},
-    'Travel':{icon:'plane', color:'#aebf92', tint:'#ccdbb2'},
-    'Food':{icon:'shopping-basket', color:'#e2678c', tint:'#ffdfe6'},
-    'Clothes':{icon:'shopping-bag', color:'#c14a6f', tint:'#ffdfe6'},
-    'Fun budget':{icon:'sparkles', color:'#f78fac', tint:'#fff1f4'},
-    'Family':{icon:'family', color:'#9a3454', tint:'#ffc2d1'},
-    'Life essentials':{icon:'heart', color:'#728157', tint:'#f0fae1'},
-    'Eating out':{icon:'utensils', color:'#f78fac', tint:'#fff1f4'}
+    'Saving':{icon:'sprout', color:'#ab2b56', tint:'#f0dbe2'},
+    'Rent & Utilities':{icon:'home', color:'#d24e2d', tint:'#f1dfda'},
+    'Other fixed expenses':{icon:'repeat', color:'#b88a1e', tint:'#f2ebd9'},
+    'Emergency':{icon:'alert-circle', color:'#92be2d', tint:'#eaf1da'},
+    'Travel':{icon:'plane', color:'#377915', tint:'#e1f2d9'},
+    'Food':{icon:'shopping-basket', color:'#29a37a', tint:'#dbf0e9'},
+    'Clothes':{icon:'shopping-bag', color:'#128da5', tint:'#d7eff4'},
+    'Fun budget':{icon:'sparkles', color:'#2775b9', tint:'#dae6f1'},
+    'Family':{icon:'family', color:'#6339c6', tint:'#e2dcef'},
+    'Life essentials':{icon:'heart', color:'#a329a3', tint:'#f0dbf0'},
+    'Eating out':{icon:'utensils', color:'#be2d81', tint:'#f1dae7'}
   };
   // Reference baseline from the Targets tab of the linked budget_2026 spreadsheet: monthly income
   // this app assumes for its own local Target(\u20AC) math, and each category's % share of it. The
