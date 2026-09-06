@@ -239,10 +239,13 @@
   // ---------- state ----------
   var state = null;
 
+  // Baked-in default so a wiped/fresh browser storage still points at the right Sheet
+  // without having to re-paste it -- change this if you ever redeploy to a new /exec URL.
+  var DEFAULT_SYNC_URL = 'https://script.google.com/macros/s/AKfycbxg74ZeQgrHTvgHrzSFz5z5z_yJPbJlHJijoRNoW0KDSAzPkdikf14r2joJv8bRL73a/exec';
   function defaultState(){
     var pct = {}; CATS.forEach(function(c){ pct[c]=CATEGORY_PCT[c]; });
     return {
-      settings:{dashboardLayout:'ring', pinkIntensity:'bold', syncUrl:''},
+      settings:{dashboardLayout:'ring', pinkIntensity:'bold', syncUrl:DEFAULT_SYNC_URL},
       monthlyIncome:MONTHLY_INCOME, categoryPct:pct, expenses:[],
       migratedRemoveDemoData: true
     };
