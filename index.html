@@ -247,7 +247,11 @@
 
   // Baked-in default so a wiped/fresh browser storage still points at the right Sheet
   // without having to re-paste it -- change this if you ever redeploy to a new /exec URL.
-  var DEFAULT_SYNC_URL = 'https://script.google.com/macros/s/AKfycbxg74ZeQgrHTvgHrzSFz5z5z_yJPbJlHJijoRNoW0KDSAzPkdikf14r2joJv8bRL73a/exec';
+  var DEFAULT_SYNC_URL = 'https://script.google.com/macros/s/AKfycbzr55jc2YHqjJD8c9TLC-enGZz7FFYIaJ5Yp4wV7blNKkiPjonyrqOFbl6lEglpzsNq/exec';
+  // Apps Script deployment IDs superseded by a newer one (each new deployment -- as opposed to
+  // a new version of an existing one -- gets its own separate URL). Any device still holding one
+  // of these upgrades automatically to DEFAULT_SYNC_URL on next load.
+  var RETIRED_SYNC_URLS = ['https://script.google.com/macros/s/AKfycbxg74ZeQgrHTvgHrzSFz5z5z_yJPbJlHJijoRNoW0KDSAzPkdikf14r2joJv8bRL73a/exec'];
   function defaultState(){
     var pct = {}; CATS.forEach(function(c){ pct[c]=CATEGORY_PCT[c]; });
     return {
@@ -279,6 +283,11 @@
           // default existed -- otherwise it stays empty forever since this only ever
           // seeds it once, for storage that was never touched.
           if(parsed.settings && !parsed.settings.syncUrl){
+            parsed.settings.syncUrl = DEFAULT_SYNC_URL;
+            changed = true;
+          }
+          // Auto-upgrade a device still pointed at a retired deployment URL.
+          if(parsed.settings && RETIRED_SYNC_URLS.indexOf(parsed.settings.syncUrl) >= 0){
             parsed.settings.syncUrl = DEFAULT_SYNC_URL;
             changed = true;
           }
