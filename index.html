@@ -374,6 +374,27 @@
     return { monthlyIncome: state.monthlyIncome, categories: categories };
   }
 
+  function computeYearlyCumulative(){
+    var now = new Date(), year = now.getFullYear(), monthIndex = now.getMonth(), today = now.getDate();
+    var monthlyBudget = state.monthlyIncome;
+    var points = [], cumActual = 0, cumPlanned = 0;
+    for(var m=0; m<=monthIndex; m++){
+      var isCurrent = m===monthIndex;
+      var throughDay = isCurrent ? today : daysInMonth(year, m);
+      var catMap = monthTotalsByCategory(state.expenses, year, m, throughDay);
+      var monthSpent = CATS.reduce(function(a,c){ return a+catMap[c]; }, 0);
+      cumActual = round2(cumActual + monthSpent);
+      // the current (partial) month's planned share is prorated by how far through it we are,
+      // so "on plan" tracks day-by-day rather than snapping to the full month on the 1st.
+      var monthPlanned = isCurrent ? round2(monthlyBudget * (throughDay/daysInMonth(year,m))) : monthlyBudget;
+      cumPlanned = round2(cumPlanned + monthPlanned);
+      points.push({ month:m, label:MONTH_ABBR[m], actual:cumActual, planned:cumPlanned });
+    }
+    var last = points[points.length-1];
+    return { points:points, totalActual:last.actual, totalPlanned:last.planned,
+      delta: round2(last.actual-last.planned), year:year };
+  }
+
   function computeInsights(dash){
     var now = new Date(), year = now.getFullYear(), monthIndex = now.getMonth(), today = now.getDate();
     var thisMonth = monthTotalsByCategory(state.expenses, year, monthIndex, today);
@@ -418,6 +439,15 @@
     var start = polarPoint_(cx, cy, r, startDeg), end = polarPoint_(cx, cy, r, endDeg);
     var largeArc = (endDeg - startDeg) > 180 ? 1 : 0;
     return 'M'+cx+','+cy+' L'+start[0]+','+start[1]+' A'+r+','+r+' 0 '+largeArc+',1 '+end[0]+','+end[1]+' Z';
+  }
+  // Straight-segment line path for a cumulative series, normalized into a w x h viewBox.
+  function buildLinePath(points, key, w, h, maxVal){
+    var n = points.length;
+    return points.map(function(p, i){
+      var x = n>1 ? (i/(n-1))*w : w/2;
+      var y = h - (p[key]/maxVal)*h;
+      return (i===0?'M':'L') + round2(x)+','+round2(y);
+    }).join(' ');
   }
   function buildDonutGradient(categories){
     var acc=0; var stops = categories.map(function(c){ var seg=c.color+' '+acc+'% '+(acc+c.pct)+'%'; acc+=c.pct; return seg; });
@@ -603,6 +633,29 @@
   }
 
   // ---------- render: budgets ----------
+  function renderYearlyCard(){
+    var y = computeYearlyCumulative();
+    var W = 280, H = 96;
+    var maxVal = Math.max(y.totalActual, y.totalPlanned, 1) * 1.12;
+    var actualPath = buildLinePath(y.points, 'actual', W, H, maxVal);
+    var plannedPath = buildLinePath(y.points, 'planned', W, H, maxVal);
+    var over = y.delta > 0;
+    var deltaText = y.delta===0 ? 'right on plan' :
+      (over ? fmt0(y.delta)+' over your year-to-date plan' : fmt0(Math.abs(y.delta))+' under your year-to-date plan');
+    return '<div class="card-block">' +
+      '<div class="row-between"><div class="h3">'+y.year+' so far</div>' +
+      '<div style="font-size:11px;color:var(--ink-soft)">through '+y.points[y.points.length-1].label+'</div></div>' +
+      '<div style="font-size:13.5px;color:var(--ink-soft)">'+fmt0(y.totalActual)+' spent of '+fmt0(y.totalPlanned)+' planned — '+deltaText+'</div>' +
+      '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:'+H+'px;overflow:visible">' +
+        '<path d="'+plannedPath+'" fill="none" stroke="var(--ink-faint)" stroke-width="2" stroke-dasharray="4 4"/>' +
+        '<path d="'+actualPath+'" fill="none" stroke="var(--pink)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>' +
+      '<div class="axis-row">' + y.points.map(function(p){ return '<span>'+p.label+'</span>'; }).join('') + '</div>' +
+      '<div style="display:flex;gap:16px;font-size:11.5px;color:var(--ink-soft)">' +
+        '<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:2.5px;background:var(--pink);display:inline-block;border-radius:2px"></span>Spent</span>' +
+        '<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:2px;background:var(--ink-faint);display:inline-block;border-radius:2px"></span>Planned</span>' +
+      '</div></div>';
+  }
   function renderBudgets(){
     var data = computeBudgets();
     var html = '<div style="display:flex;flex-direction:column;gap:18px">';
@@ -610,6 +663,7 @@
       '<div style="flex:1;min-width:0"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft)">Monthly income (reference)</div>' +
       '<div style="font-family:var(--display);font-size:25px;margin-top:2px">'+fmt0(data.monthlyIncome)+'</div></div>' +
       '<button type="button" class="btn-ghost" data-action="openAdjust" style="padding:9px 16px;font-size:13px">Adjust</button></div>';
+    html += renderYearlyCard();
     data.categories.forEach(function(b){
       html += '<div style="display:flex;flex-direction:column;gap:7px">' +
         '<div style="display:flex;align-items:baseline;gap:8px"><span class="budget-name">'+b.name+'</span>' +
